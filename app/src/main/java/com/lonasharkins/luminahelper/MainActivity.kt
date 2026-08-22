@@ -1,10 +1,14 @@
 package com.lonasharkins.luminahelper
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -47,27 +51,48 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lonasharkins.luminahelper.accessibility.AccessibilityStatus
 import com.lonasharkins.luminahelper.accessibility.LuminaAccessibilityService
+import com.lonasharkins.luminahelper.midi.MidiParser
+import com.lonasharkins.luminahelper.model.ImportedMidiFile
 import com.lonasharkins.luminahelper.model.InstrumentProfile
 import com.lonasharkins.luminahelper.music.KeyLayoutFactory
 import com.lonasharkins.luminahelper.storage.InstrumentProfileRepository
+import com.lonasharkins.luminahelper.storage.MidiLibraryRepository
+import java.io.ByteArrayOutputStream
+import java.util.Locale
+import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
     private lateinit var profileRepository: InstrumentProfileRepository
+    private lateinit var midiLibraryRepository: MidiLibraryRepository
+    private lateinit var openMidiDocument: ActivityResultLauncher<Array<String>>
+    private val midiExecutor = Executors.newSingleThreadExecutor()
     private var accessibilityEnabled by mutableStateOf(false)
     private var savedProfiles by mutableStateOf<List<InstrumentProfile>>(emptyList())
+    private var importedMidiFiles by mutableStateOf<List<ImportedMidiFile>>(emptyList())
+    private var selectedProfileId by mutableStateOf<String?>(null)
+    private var isImportingMidi by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         profileRepository = InstrumentProfileRepository(this)
+        midiLibraryRepository = MidiLibraryRepository(this)
+        openMidiDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) importMidi(uri)
+        }
         enableEdgeToEdge()
         setContent {
             LuminaApp(
                 accessibilityEnabled = accessibilityEnabled,
                 savedProfiles = savedProfiles,
+                importedMidiFiles = importedMidiFiles,
+                selectedProfileId = selectedProfileId,
+                isImportingMidi = isImportingMidi,
                 onOpenAccessibilitySettings = {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 },
                 onStartCalibration = ::startCalibration,
+                onSelectProfile = { selectedProfileId = it },
+                onChooseMidi = ::chooseMidi,
             )
         }
     }
@@ -76,6 +101,15 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         accessibilityEnabled = AccessibilityStatus.isEnabled(this)
         savedProfiles = profileRepository.loadAll()
+        importedMidiFiles = midiLibraryRepository.loadAll()
+        if (savedProfiles.none { it.id == selectedProfileId }) {
+            selectedProfileId = savedProfiles.firstOrNull()?.id
+        }
+    }
+
+    override fun onDestroy() {
+        midiExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun startCalibration(name: String, keyCount: Int) {
@@ -96,6 +130,97 @@ class MainActivity : ComponentActivity() {
         ).show()
         moveTaskToBack(true)
     }
+
+    private fun chooseMidi() {
+        if (isImportingMidi) return
+        openMidiDocument.launch(
+            arrayOf(
+                "audio/midi",
+                "audio/x-midi",
+                "application/x-midi",
+                "application/octet-stream",
+            ),
+        )
+    }
+
+    private fun importMidi(uri: Uri) {
+        if (isImportingMidi) return
+        isImportingMidi = true
+        val profileId = selectedProfileId
+
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+
+        midiExecutor.execute {
+            val result = runCatching {
+                val bytes = readMidiBytes(uri)
+                val song = MidiParser.parse(bytes)
+                ImportedMidiFile.fromSong(
+                    displayName = resolveDisplayName(uri),
+                    uri = uri.toString(),
+                    song = song,
+                    instrumentProfileId = profileId,
+                ).also(midiLibraryRepository::save)
+            }
+
+            runOnUiThread {
+                isImportingMidi = false
+                result.onSuccess { imported ->
+                    importedMidiFiles = midiLibraryRepository.loadAll()
+                    Toast.makeText(
+                        this,
+                        "${imported.noteCount} notas MIDI importadas",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        this,
+                        error.message ?: "Não foi possível ler este arquivo MIDI",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun readMidiBytes(uri: Uri): ByteArray {
+        val input = contentResolver.openInputStream(uri)
+            ?: error("Não foi possível abrir o arquivo selecionado")
+        return input.use { stream ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var total = 0
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > MidiParser.MAX_FILE_SIZE_BYTES) {
+                    error("O arquivo MIDI ultrapassa o limite de 8 MB")
+                }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        }
+    }
+
+    private fun resolveDisplayName(uri: Uri): String {
+        val fromProvider = contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+        return fromProvider?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')
+            ?: "Música MIDI"
+    }
 }
 
 private val LuminaColors = darkColorScheme(
@@ -112,8 +237,13 @@ private val LuminaColors = darkColorScheme(
 private fun LuminaApp(
     accessibilityEnabled: Boolean,
     savedProfiles: List<InstrumentProfile>,
+    importedMidiFiles: List<ImportedMidiFile>,
+    selectedProfileId: String?,
+    isImportingMidi: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     onStartCalibration: (String, Int) -> Unit,
+    onSelectProfile: (String) -> Unit,
+    onChooseMidi: () -> Unit,
 ) {
     MaterialTheme(colorScheme = LuminaColors) {
         Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
@@ -149,6 +279,15 @@ private fun LuminaApp(
                 if (savedProfiles.isNotEmpty()) {
                     SavedProfilesCard(savedProfiles)
                 }
+
+                MidiLibraryCard(
+                    profiles = savedProfiles,
+                    importedFiles = importedMidiFiles,
+                    selectedProfileId = selectedProfileId,
+                    isImporting = isImportingMidi,
+                    onSelectProfile = onSelectProfile,
+                    onChooseMidi = onChooseMidi,
+                )
             }
         }
     }
@@ -367,3 +506,159 @@ private fun SavedProfilesCard(profiles: List<InstrumentProfile>) {
     }
 }
 
+@Composable
+private fun MidiLibraryCard(
+    profiles: List<InstrumentProfile>,
+    importedFiles: List<ImportedMidiFile>,
+    selectedProfileId: String?,
+    isImporting: Boolean,
+    onSelectProfile: (String) -> Unit,
+    onChooseMidi: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(22.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Importar música MIDI",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Escolha um arquivo .mid ou .midi. O Lumina irá ler notas, duração e mudanças de andamento.",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
+
+            if (profiles.isEmpty()) {
+                Text(
+                    text = "Você pode importar agora, mas precisará calibrar um perfil para reproduzir depois.",
+                    color = Color(0xFFFFC06A),
+                    fontSize = 13.sp,
+                )
+            } else {
+                Text(
+                    text = "Associar ao perfil",
+                    fontWeight = FontWeight.SemiBold,
+                )
+                profiles.forEach { profile ->
+                    if (profile.id == selectedProfileId) {
+                        Button(
+                            onClick = { onSelectProfile(profile.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Selecionado: ${profile.name}")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSelectProfile(profile.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(profile.name)
+                        }
+                    }
+                }
+            }
+
+            Button(
+                onClick = onChooseMidi,
+                enabled = !isImporting,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (isImporting) "Lendo arquivo..." else "Escolher arquivo MIDI")
+            }
+
+            if (importedFiles.isEmpty()) {
+                Text(
+                    text = "Nenhum arquivo MIDI importado.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    fontSize = 13.sp,
+                )
+            } else {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Arquivos interpretados",
+                    fontWeight = FontWeight.Bold,
+                )
+                importedFiles.forEach { file ->
+                    ImportedMidiCard(file, profiles)
+                }
+            }
+
+            Text(
+                text = "Nesta etapa o arquivo é interpretado, mas a reprodução automática ainda não é iniciada.",
+                color = MaterialTheme.colorScheme.secondary,
+                fontSize = 13.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ImportedMidiCard(
+    file: ImportedMidiFile,
+    profiles: List<InstrumentProfile>,
+) {
+    val profileName = profiles.firstOrNull { it.id == file.instrumentProfileId }?.name
+    Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(file.displayName, fontWeight = FontWeight.SemiBold)
+            if (!file.songTitle.isNullOrBlank() && file.songTitle != file.displayName) {
+                Text(
+                    text = file.songTitle,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                    fontSize = 13.sp,
+                )
+            }
+            Text(
+                text = "${file.noteCount} notas • ${file.trackCount} faixas • ${formatDuration(file.durationMs)}",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                fontSize = 13.sp,
+            )
+            if (file.lowestNote != null && file.highestNote != null) {
+                Text(
+                    text = "Extensão: ${midiNoteLabel(file.lowestNote)} até ${midiNoteLabel(file.highestNote)}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                    fontSize = 13.sp,
+                )
+            }
+            Text(
+                text = profileName?.let { "Perfil: $it" } ?: "Sem perfil associado",
+                color = if (profileName != null) {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    Color(0xFFFFC06A)
+                },
+                fontSize = 13.sp,
+            )
+            Text(
+                text = "MIDI formato ${file.format} • ${file.ticksPerQuarterNote} pulsos por tempo",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = durationMs.coerceAtLeast(0L) / 1_000L
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return String.format(Locale.ROOT, "%d:%02d", minutes, seconds)
+}
+
+private fun midiNoteLabel(note: Int): String {
+    val names = arrayOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+    return "${names[note % 12]}${note / 12 - 1}"
+}
