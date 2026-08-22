@@ -9,6 +9,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import com.lonasharkins.luminahelper.model.ScreenPoint
 import com.lonasharkins.luminahelper.music.KeyLayoutFactory
+import com.lonasharkins.luminahelper.playback.PreparedPlayback
 import com.lonasharkins.luminahelper.storage.InstrumentProfileRepository
 import java.lang.ref.WeakReference
 import java.util.UUID
@@ -16,6 +17,7 @@ import java.util.UUID
 class LuminaAccessibilityService : AccessibilityService() {
     private lateinit var profileRepository: InstrumentProfileRepository
     private lateinit var calibrationOverlay: CalibrationOverlayController
+    private lateinit var playbackOverlay: PlaybackOverlayController
 
     companion object {
         @Volatile
@@ -31,6 +33,9 @@ class LuminaAccessibilityService : AccessibilityService() {
 
         fun prepareCalibration(name: String, keyCount: Int): Boolean =
             activeService?.get()?.beginCalibration(name, keyCount) ?: false
+
+        fun preparePlayback(playback: PreparedPlayback): Boolean =
+            activeService?.get()?.beginPlayback(playback) ?: false
     }
 
     override fun onServiceConnected() {
@@ -50,6 +55,10 @@ class LuminaAccessibilityService : AccessibilityService() {
                 Toast.makeText(this, "Mapeamento cancelado", Toast.LENGTH_SHORT).show()
             },
         )
+        playbackOverlay = PlaybackOverlayController(
+            service = this,
+            dispatchChord = ::dispatchChord,
+        )
         activeService = WeakReference(this)
     }
 
@@ -57,10 +66,12 @@ class LuminaAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         if (::calibrationOverlay.isInitialized) calibrationOverlay.dismiss()
+        if (::playbackOverlay.isInitialized) playbackOverlay.dismiss()
     }
 
     override fun onDestroy() {
         if (::calibrationOverlay.isInitialized) calibrationOverlay.dismiss()
+        if (::playbackOverlay.isInitialized) playbackOverlay.dismiss()
         if (activeService?.get() === this) activeService = null
         super.onDestroy()
     }
@@ -71,12 +82,20 @@ class LuminaAccessibilityService : AccessibilityService() {
             return false
         }
 
+        if (::playbackOverlay.isInitialized) playbackOverlay.dismiss()
+
         val profile = KeyLayoutFactory.centeredChromatic(
             id = UUID.randomUUID().toString(),
             name = safeName,
             keyCount = keyCount,
         )
         return calibrationOverlay.prepare(profile)
+    }
+
+    private fun beginPlayback(playback: PreparedPlayback): Boolean {
+        if (!::playbackOverlay.isInitialized || playback.plan.events.isEmpty()) return false
+        if (::calibrationOverlay.isInitialized) calibrationOverlay.dismiss()
+        return playbackOverlay.show(playback)
     }
 
     private fun dispatchTap(point: ScreenPoint, durationMs: Long): Boolean =
@@ -87,16 +106,19 @@ class LuminaAccessibilityService : AccessibilityService() {
 
         val (screenWidth, screenHeight) = screenSize()
         val safeDuration = durationMs.coerceIn(1L, 1_000L)
-        val builder = GestureDescription.Builder()
-
-        points.distinct().forEach { point ->
-            val path = Path().apply {
-                moveTo(point.x * screenWidth, point.y * screenHeight)
-            }
-            builder.addStroke(GestureDescription.StrokeDescription(path, 0L, safeDuration))
-        }
-
-        return dispatchGesture(builder.build(), null, null)
+        return runCatching {
+            val builder = GestureDescription.Builder()
+            points
+                .distinct()
+                .take(GestureDescription.getMaxStrokeCount())
+                .forEach { point ->
+                    val path = Path().apply {
+                        moveTo(point.x * screenWidth, point.y * screenHeight)
+                    }
+                    builder.addStroke(GestureDescription.StrokeDescription(path, 0L, safeDuration))
+                }
+            dispatchGesture(builder.build(), null, null)
+        }.getOrDefault(false)
     }
 
     private fun screenSize(): Pair<Int, Int> {
