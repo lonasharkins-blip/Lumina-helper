@@ -1,5 +1,7 @@
 # Lumina Helper
 
+[![Build APK](https://github.com/lonasharkins-blip/Lumina-helper/actions/workflows/build-apk.yml/badge.svg)](https://github.com/lonasharkins-blip/Lumina-helper/actions/workflows/build-apk.yml)
+
 Aplicativo Android original para mapear instrumentos virtuais exibidos na tela e reproduzir músicas por meio de toques controlados pelo usuário.
 
 ## Objetivo
