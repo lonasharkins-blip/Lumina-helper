@@ -3,6 +3,7 @@ package com.lonasharkins.luminahelper
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -44,21 +46,28 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lonasharkins.luminahelper.accessibility.AccessibilityStatus
+import com.lonasharkins.luminahelper.accessibility.LuminaAccessibilityService
 import com.lonasharkins.luminahelper.model.InstrumentProfile
 import com.lonasharkins.luminahelper.music.KeyLayoutFactory
+import com.lonasharkins.luminahelper.storage.InstrumentProfileRepository
 
 class MainActivity : ComponentActivity() {
+    private lateinit var profileRepository: InstrumentProfileRepository
     private var accessibilityEnabled by mutableStateOf(false)
+    private var savedProfiles by mutableStateOf<List<InstrumentProfile>>(emptyList())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        profileRepository = InstrumentProfileRepository(this)
         enableEdgeToEdge()
         setContent {
             LuminaApp(
                 accessibilityEnabled = accessibilityEnabled,
+                savedProfiles = savedProfiles,
                 onOpenAccessibilitySettings = {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 },
+                onStartCalibration = ::startCalibration,
             )
         }
     }
@@ -66,6 +75,26 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         accessibilityEnabled = AccessibilityStatus.isEnabled(this)
+        savedProfiles = profileRepository.loadAll()
+    }
+
+    private fun startCalibration(name: String, keyCount: Int) {
+        val prepared = LuminaAccessibilityService.prepareCalibration(name, keyCount)
+        if (!prepared) {
+            Toast.makeText(
+                this,
+                "Ative novamente o serviço de acessibilidade e tente de novo",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+
+        Toast.makeText(
+            this,
+            "Abra o jogo e toque no botão flutuante Mapear",
+            Toast.LENGTH_LONG,
+        ).show()
+        moveTaskToBack(true)
     }
 }
 
@@ -82,7 +111,9 @@ private val LuminaColors = darkColorScheme(
 @Composable
 private fun LuminaApp(
     accessibilityEnabled: Boolean,
+    savedProfiles: List<InstrumentProfile>,
     onOpenAccessibilitySettings: () -> Unit,
+    onStartCalibration: (String, Int) -> Unit,
 ) {
     MaterialTheme(colorScheme = LuminaColors) {
         Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
@@ -110,7 +141,14 @@ private fun LuminaApp(
                     onOpenSettings = onOpenAccessibilitySettings,
                 )
 
-                InstrumentBuilderPreview()
+                InstrumentBuilder(
+                    accessibilityEnabled = accessibilityEnabled,
+                    onStartCalibration = onStartCalibration,
+                )
+
+                if (savedProfiles.isNotEmpty()) {
+                    SavedProfilesCard(savedProfiles)
+                }
             }
         }
     }
@@ -162,12 +200,16 @@ private fun AccessibilityCard(
 }
 
 @Composable
-private fun InstrumentBuilderPreview() {
+private fun InstrumentBuilder(
+    accessibilityEnabled: Boolean,
+    onStartCalibration: (String, Int) -> Unit,
+) {
+    var profileName by rememberSaveable { mutableStateOf("Meu instrumento") }
     var keyCount by rememberSaveable { mutableIntStateOf(8) }
-    val profile = remember(keyCount) {
+    val profile = remember(profileName, keyCount) {
         KeyLayoutFactory.centeredChromatic(
             id = "preview",
-            name = "Instrumento personalizado",
+            name = profileName.ifBlank { "Instrumento personalizado" },
             keyCount = keyCount,
         )
     }
@@ -182,13 +224,21 @@ private fun InstrumentBuilderPreview() {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                text = "Quantidade livre de teclas",
+                text = "Mapear novo instrumento",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Use poucas teclas para o piano de emoji do JJS ou aumente para instrumentos maiores.",
+                text = "Escolha quantas teclas existem e marque cada uma diretamente sobre o jogo.",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
+
+            OutlinedTextField(
+                value = profileName,
+                onValueChange = { profileName = it.take(40) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Nome do instrumento") },
+                singleLine = true,
             )
 
             Row(
@@ -216,8 +266,20 @@ private fun InstrumentBuilderPreview() {
 
             InstrumentKeys(profile)
 
+            Button(
+                onClick = { onStartCalibration(profileName.trim(), keyCount) },
+                enabled = accessibilityEnabled && profileName.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Mapear na tela")
+            }
+
             Text(
-                text = "A posição de cada tecla será marcada sobre o jogo na etapa de calibração.",
+                text = if (accessibilityEnabled) {
+                    "O aplicativo irá para o fundo. No jogo, toque em Mapear e depois marque as teclas em ordem."
+                } else {
+                    "Ative a acessibilidade acima antes de começar o mapeamento."
+                },
                 color = MaterialTheme.colorScheme.secondary,
                 fontSize = 13.sp,
             )
@@ -258,3 +320,50 @@ private fun InstrumentKeys(profile: InstrumentProfile) {
         }
     }
 }
+
+@Composable
+private fun SavedProfilesCard(profiles: List<InstrumentProfile>) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(22.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "Perfis salvos",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            profiles.forEach { profile ->
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(profile.name, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "${profile.keys.size} teclas",
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                                fontSize = 13.sp,
+                            )
+                        }
+                        Text(
+                            text = "Calibrado",
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontSize = 13.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+

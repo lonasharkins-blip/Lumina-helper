@@ -6,10 +6,17 @@ import android.graphics.Path
 import android.os.Build
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.widget.Toast
 import com.lonasharkins.luminahelper.model.ScreenPoint
+import com.lonasharkins.luminahelper.music.KeyLayoutFactory
+import com.lonasharkins.luminahelper.storage.InstrumentProfileRepository
 import java.lang.ref.WeakReference
+import java.util.UUID
 
 class LuminaAccessibilityService : AccessibilityService() {
+    private lateinit var profileRepository: InstrumentProfileRepository
+    private lateinit var calibrationOverlay: CalibrationOverlayController
+
     companion object {
         @Volatile
         private var activeService: WeakReference<LuminaAccessibilityService>? = null
@@ -21,20 +28,55 @@ class LuminaAccessibilityService : AccessibilityService() {
 
         fun tapChord(points: Collection<ScreenPoint>, durationMs: Long = 40L): Boolean =
             activeService?.get()?.dispatchChord(points, durationMs) ?: false
+
+        fun prepareCalibration(name: String, keyCount: Int): Boolean =
+            activeService?.get()?.beginCalibration(name, keyCount) ?: false
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        profileRepository = InstrumentProfileRepository(this)
+        calibrationOverlay = CalibrationOverlayController(
+            service = this,
+            onProfileSaved = { profile ->
+                profileRepository.save(profile)
+                Toast.makeText(
+                    this,
+                    "Perfil ${profile.name} salvo com ${profile.keys.size} teclas",
+                    Toast.LENGTH_LONG,
+                ).show()
+            },
+            onCancelled = {
+                Toast.makeText(this, "Mapeamento cancelado", Toast.LENGTH_SHORT).show()
+            },
+        )
         activeService = WeakReference(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        if (::calibrationOverlay.isInitialized) calibrationOverlay.dismiss()
+    }
 
     override fun onDestroy() {
+        if (::calibrationOverlay.isInitialized) calibrationOverlay.dismiss()
         if (activeService?.get() === this) activeService = null
         super.onDestroy()
+    }
+
+    private fun beginCalibration(name: String, keyCount: Int): Boolean {
+        val safeName = name.trim()
+        if (safeName.isEmpty() || keyCount !in 1..88 || !::calibrationOverlay.isInitialized) {
+            return false
+        }
+
+        val profile = KeyLayoutFactory.centeredChromatic(
+            id = UUID.randomUUID().toString(),
+            name = safeName,
+            keyCount = keyCount,
+        )
+        return calibrationOverlay.prepare(profile)
     }
 
     private fun dispatchTap(point: ScreenPoint, durationMs: Long): Boolean =
@@ -68,4 +110,3 @@ class LuminaAccessibilityService : AccessibilityService() {
         return metrics.widthPixels to metrics.heightPixels
     }
 }
-
