@@ -55,6 +55,8 @@ import com.lonasharkins.luminahelper.midi.MidiParser
 import com.lonasharkins.luminahelper.model.ImportedMidiFile
 import com.lonasharkins.luminahelper.model.InstrumentProfile
 import com.lonasharkins.luminahelper.music.KeyLayoutFactory
+import com.lonasharkins.luminahelper.playback.PlaybackPlanBuilder
+import com.lonasharkins.luminahelper.playback.PreparedPlayback
 import com.lonasharkins.luminahelper.storage.InstrumentProfileRepository
 import com.lonasharkins.luminahelper.storage.MidiLibraryRepository
 import java.io.ByteArrayOutputStream
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity() {
     private var importedMidiFiles by mutableStateOf<List<ImportedMidiFile>>(emptyList())
     private var selectedProfileId by mutableStateOf<String?>(null)
     private var isImportingMidi by mutableStateOf(false)
+    private var isPreparingPlayback by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,12 +90,15 @@ class MainActivity : ComponentActivity() {
                 importedMidiFiles = importedMidiFiles,
                 selectedProfileId = selectedProfileId,
                 isImportingMidi = isImportingMidi,
+                isPreparingPlayback = isPreparingPlayback,
                 onOpenAccessibilitySettings = {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 },
                 onStartCalibration = ::startCalibration,
                 onSelectProfile = { selectedProfileId = it },
                 onChooseMidi = ::chooseMidi,
+                onAssociateMidi = ::associateMidi,
+                onPreparePlayback = ::preparePlayback,
             )
         }
     }
@@ -221,6 +227,79 @@ class MainActivity : ComponentActivity() {
             ?: uri.lastPathSegment?.substringAfterLast('/')
             ?: "Música MIDI"
     }
+
+    private fun associateMidi(fileId: String, profileId: String) {
+        midiLibraryRepository.associateProfile(fileId, profileId)
+        importedMidiFiles = midiLibraryRepository.loadAll()
+    }
+
+    private fun preparePlayback(
+        file: ImportedMidiFile,
+        speedPercent: Int,
+        transposeSemitones: Int,
+    ) {
+        if (isPreparingPlayback) return
+        val profile = savedProfiles.firstOrNull { it.id == file.instrumentProfileId }
+        if (profile == null) {
+            Toast.makeText(this, "Associe um perfil calibrado a esta música", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!AccessibilityStatus.isEnabled(this) || !LuminaAccessibilityService.isConnected()) {
+            Toast.makeText(
+                this,
+                "Ative o serviço de acessibilidade antes de preparar a reprodução",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+
+        isPreparingPlayback = true
+        midiExecutor.execute {
+            val result = runCatching {
+                val song = MidiParser.parse(readMidiBytes(Uri.parse(file.uri)))
+                val plan = PlaybackPlanBuilder.build(
+                    song = song,
+                    profile = profile,
+                    speedPercent = speedPercent,
+                    transposeSemitones = transposeSemitones,
+                )
+                check(plan.events.isNotEmpty()) { "Este MIDI não possui notas reproduzíveis" }
+                PreparedPlayback(
+                    songName = file.songTitle?.takeIf { it.isNotBlank() } ?: file.displayName,
+                    profileName = profile.name,
+                    speedPercent = speedPercent,
+                    transposeSemitones = transposeSemitones,
+                    plan = plan,
+                )
+            }
+
+            runOnUiThread {
+                isPreparingPlayback = false
+                result.onSuccess { playback ->
+                    if (LuminaAccessibilityService.preparePlayback(playback)) {
+                        Toast.makeText(
+                            this,
+                            "No jogo, toque em Iniciar no controle flutuante",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        moveTaskToBack(true)
+                    } else {
+                        Toast.makeText(
+                            this,
+                            "Não foi possível abrir os controles flutuantes",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }.onFailure { error ->
+                    Toast.makeText(
+                        this,
+                        error.message ?: "Não foi possível preparar esta música",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
+    }
 }
 
 private val LuminaColors = darkColorScheme(
@@ -240,10 +319,13 @@ private fun LuminaApp(
     importedMidiFiles: List<ImportedMidiFile>,
     selectedProfileId: String?,
     isImportingMidi: Boolean,
+    isPreparingPlayback: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     onStartCalibration: (String, Int) -> Unit,
     onSelectProfile: (String) -> Unit,
     onChooseMidi: () -> Unit,
+    onAssociateMidi: (String, String) -> Unit,
+    onPreparePlayback: (ImportedMidiFile, Int, Int) -> Unit,
 ) {
     MaterialTheme(colorScheme = LuminaColors) {
         Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
@@ -285,8 +367,12 @@ private fun LuminaApp(
                     importedFiles = importedMidiFiles,
                     selectedProfileId = selectedProfileId,
                     isImporting = isImportingMidi,
+                    isPreparingPlayback = isPreparingPlayback,
+                    accessibilityEnabled = accessibilityEnabled,
                     onSelectProfile = onSelectProfile,
                     onChooseMidi = onChooseMidi,
+                    onAssociateMidi = onAssociateMidi,
+                    onPreparePlayback = onPreparePlayback,
                 )
             }
         }
@@ -512,8 +598,12 @@ private fun MidiLibraryCard(
     importedFiles: List<ImportedMidiFile>,
     selectedProfileId: String?,
     isImporting: Boolean,
+    isPreparingPlayback: Boolean,
+    accessibilityEnabled: Boolean,
     onSelectProfile: (String) -> Unit,
     onChooseMidi: () -> Unit,
+    onAssociateMidi: (String, String) -> Unit,
+    onPreparePlayback: (ImportedMidiFile, Int, Int) -> Unit,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -585,12 +675,20 @@ private fun MidiLibraryCard(
                     fontWeight = FontWeight.Bold,
                 )
                 importedFiles.forEach { file ->
-                    ImportedMidiCard(file, profiles)
+                    ImportedMidiCard(
+                        file = file,
+                        profiles = profiles,
+                        selectedProfileId = selectedProfileId,
+                        accessibilityEnabled = accessibilityEnabled,
+                        isPreparingPlayback = isPreparingPlayback,
+                        onAssociateMidi = onAssociateMidi,
+                        onPreparePlayback = onPreparePlayback,
+                    )
                 }
             }
 
             Text(
-                text = "Nesta etapa o arquivo é interpretado, mas a reprodução automática ainda não é iniciada.",
+                text = "A música só começa quando você tocar em Iniciar no controle flutuante sobre o jogo.",
                 color = MaterialTheme.colorScheme.secondary,
                 fontSize = 13.sp,
             )
@@ -602,8 +700,16 @@ private fun MidiLibraryCard(
 private fun ImportedMidiCard(
     file: ImportedMidiFile,
     profiles: List<InstrumentProfile>,
+    selectedProfileId: String?,
+    accessibilityEnabled: Boolean,
+    isPreparingPlayback: Boolean,
+    onAssociateMidi: (String, String) -> Unit,
+    onPreparePlayback: (ImportedMidiFile, Int, Int) -> Unit,
 ) {
-    val profileName = profiles.firstOrNull { it.id == file.instrumentProfileId }?.name
+    val associatedProfile = profiles.firstOrNull { it.id == file.instrumentProfileId }
+    val selectedProfile = profiles.firstOrNull { it.id == selectedProfileId }
+    var speedPercent by rememberSaveable(file.id) { mutableIntStateOf(100) }
+    var transposeSemitones by rememberSaveable(file.id) { mutableIntStateOf(0) }
     Surface(
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
         shape = RoundedCornerShape(14.dp),
@@ -634,8 +740,8 @@ private fun ImportedMidiCard(
                 )
             }
             Text(
-                text = profileName?.let { "Perfil: $it" } ?: "Sem perfil associado",
-                color = if (profileName != null) {
+                text = associatedProfile?.let { "Perfil: ${it.name}" } ?: "Sem perfil associado",
+                color = if (associatedProfile != null) {
                     MaterialTheme.colorScheme.secondary
                 } else {
                     Color(0xFFFFC06A)
@@ -647,6 +753,89 @@ private fun ImportedMidiCard(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 fontSize = 12.sp,
             )
+
+            if (selectedProfile != null && selectedProfile.id != associatedProfile?.id) {
+                OutlinedButton(
+                    onClick = { onAssociateMidi(file.id, selectedProfile.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Usar perfil: ${selectedProfile.name}")
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text("Velocidade", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { speedPercent -= 25 },
+                    enabled = speedPercent > PlaybackPlanBuilder.MIN_SPEED_PERCENT,
+                ) {
+                    Text("−")
+                }
+                Text(
+                    text = "$speedPercent%",
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                OutlinedButton(
+                    onClick = { speedPercent += 25 },
+                    enabled = speedPercent < PlaybackPlanBuilder.MAX_SPEED_PERCENT,
+                ) {
+                    Text("+")
+                }
+            }
+
+            Text("Transposição", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { transposeSemitones-- },
+                    enabled = transposeSemitones > PlaybackPlanBuilder.MIN_TRANSPOSE,
+                ) {
+                    Text("−")
+                }
+                Text(
+                    text = if (transposeSemitones >= 0) {
+                        "+$transposeSemitones semitons"
+                    } else {
+                        "$transposeSemitones semitons"
+                    },
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                OutlinedButton(
+                    onClick = { transposeSemitones++ },
+                    enabled = transposeSemitones < PlaybackPlanBuilder.MAX_TRANSPOSE,
+                ) {
+                    Text("+")
+                }
+            }
+
+            Button(
+                onClick = { onPreparePlayback(file, speedPercent, transposeSemitones) },
+                enabled = accessibilityEnabled &&
+                    associatedProfile != null &&
+                    file.noteCount > 0 &&
+                    !isPreparingPlayback,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (isPreparingPlayback) "Preparando..." else "Abrir controles no jogo")
+            }
+
+            if (!accessibilityEnabled) {
+                Text(
+                    text = "Ative a acessibilidade para reproduzir.",
+                    color = Color(0xFFFFC06A),
+                    fontSize = 12.sp,
+                )
+            }
         }
     }
 }
