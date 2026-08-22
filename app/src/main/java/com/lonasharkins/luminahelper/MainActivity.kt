@@ -56,6 +56,7 @@ import com.lonasharkins.luminahelper.model.ImportedMidiFile
 import com.lonasharkins.luminahelper.model.InstrumentProfile
 import com.lonasharkins.luminahelper.music.KeyLayoutFactory
 import com.lonasharkins.luminahelper.playback.PlaybackPlanBuilder
+import com.lonasharkins.luminahelper.playback.PlaybackMode
 import com.lonasharkins.luminahelper.playback.PreparedPlayback
 import com.lonasharkins.luminahelper.storage.InstrumentProfileRepository
 import com.lonasharkins.luminahelper.storage.MidiLibraryRepository
@@ -237,6 +238,7 @@ class MainActivity : ComponentActivity() {
         file: ImportedMidiFile,
         speedPercent: Int,
         transposeSemitones: Int,
+        playbackMode: PlaybackMode,
     ) {
         if (isPreparingPlayback) return
         val profile = savedProfiles.firstOrNull { it.id == file.instrumentProfileId }
@@ -262,6 +264,7 @@ class MainActivity : ComponentActivity() {
                     profile = profile,
                     speedPercent = speedPercent,
                     transposeSemitones = transposeSemitones,
+                    playbackMode = playbackMode,
                 )
                 check(plan.events.isNotEmpty()) { "Este MIDI não possui notas reproduzíveis" }
                 PreparedPlayback(
@@ -269,6 +272,7 @@ class MainActivity : ComponentActivity() {
                     profileName = profile.name,
                     speedPercent = speedPercent,
                     transposeSemitones = transposeSemitones,
+                    playbackMode = playbackMode,
                     plan = plan,
                 )
             }
@@ -325,7 +329,7 @@ private fun LuminaApp(
     onSelectProfile: (String) -> Unit,
     onChooseMidi: () -> Unit,
     onAssociateMidi: (String, String) -> Unit,
-    onPreparePlayback: (ImportedMidiFile, Int, Int) -> Unit,
+    onPreparePlayback: (ImportedMidiFile, Int, Int, PlaybackMode) -> Unit,
 ) {
     MaterialTheme(colorScheme = LuminaColors) {
         Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
@@ -454,7 +458,8 @@ private fun InstrumentBuilder(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Escolha quantas teclas existem e marque cada uma diretamente sobre o jogo.",
+                text = "Escolha quantas teclas existem e marque cada uma diretamente sobre o jogo. " +
+                    "Você pode tocar nas brancas e nas pretas em qualquer ordem.",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             )
 
@@ -501,7 +506,8 @@ private fun InstrumentBuilder(
 
             Text(
                 text = if (accessibilityEnabled) {
-                    "O aplicativo irá para o fundo. No jogo, toque em Mapear e depois marque as teclas em ordem."
+                    "O aplicativo irá para o fundo. No jogo, toque em Mapear e marque todas as " +
+                        "teclas. O Lumina organiza automaticamente da esquerda para a direita."
                 } else {
                     "Ative a acessibilidade acima antes de começar o mapeamento."
                 },
@@ -603,7 +609,7 @@ private fun MidiLibraryCard(
     onSelectProfile: (String) -> Unit,
     onChooseMidi: () -> Unit,
     onAssociateMidi: (String, String) -> Unit,
-    onPreparePlayback: (ImportedMidiFile, Int, Int) -> Unit,
+    onPreparePlayback: (ImportedMidiFile, Int, Int, PlaybackMode) -> Unit,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -620,7 +626,8 @@ private fun MidiLibraryCard(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Escolha um arquivo .mid ou .midi. O Lumina irá ler notas, duração e mudanças de andamento.",
+                text = "Escolha um arquivo .mid ou .midi. O modo Melodia limpa escolhe uma voz " +
+                    "principal e evita misturar todos os instrumentos.",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             )
 
@@ -704,12 +711,15 @@ private fun ImportedMidiCard(
     accessibilityEnabled: Boolean,
     isPreparingPlayback: Boolean,
     onAssociateMidi: (String, String) -> Unit,
-    onPreparePlayback: (ImportedMidiFile, Int, Int) -> Unit,
+    onPreparePlayback: (ImportedMidiFile, Int, Int, PlaybackMode) -> Unit,
 ) {
     val associatedProfile = profiles.firstOrNull { it.id == file.instrumentProfileId }
     val selectedProfile = profiles.firstOrNull { it.id == selectedProfileId }
     var speedPercent by rememberSaveable(file.id) { mutableIntStateOf(100) }
     var transposeSemitones by rememberSaveable(file.id) { mutableIntStateOf(0) }
+    var playbackMode by rememberSaveable(file.id) {
+        mutableStateOf(PlaybackMode.CLEAN_MELODY)
+    }
     Surface(
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
         shape = RoundedCornerShape(14.dp),
@@ -754,6 +764,15 @@ private fun ImportedMidiCard(
                 fontSize = 12.sp,
             )
 
+            if (file.trackCount > 1) {
+                Text(
+                    text = "Este MIDI possui várias faixas. Use Melodia limpa para evitar " +
+                        "instrumentos sobrepostos.",
+                    color = Color(0xFFFFC06A),
+                    fontSize = 12.sp,
+                )
+            }
+
             if (selectedProfile != null && selectedProfile.id != associatedProfile?.id) {
                 OutlinedButton(
                     onClick = { onAssociateMidi(file.id, selectedProfile.id) },
@@ -764,6 +783,47 @@ private fun ImportedMidiCard(
             }
 
             Spacer(Modifier.height(4.dp))
+            Text("Modo de reprodução", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            if (playbackMode == PlaybackMode.CLEAN_MELODY) {
+                Button(
+                    onClick = { playbackMode = PlaybackMode.CLEAN_MELODY },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Selecionado: Melodia limpa")
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { playbackMode = PlaybackMode.CLEAN_MELODY },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Melodia limpa")
+                }
+            }
+            if (playbackMode == PlaybackMode.FULL_ARRANGEMENT) {
+                Button(
+                    onClick = { playbackMode = PlaybackMode.FULL_ARRANGEMENT },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Selecionado: Arranjo sem bateria")
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { playbackMode = PlaybackMode.FULL_ARRANGEMENT },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Arranjo sem bateria")
+                }
+            }
+            Text(
+                text = if (playbackMode == PlaybackMode.CLEAN_MELODY) {
+                    "Recomendado para pianos pequenos: toca uma nota principal por vez."
+                } else {
+                    "Mantém acordes e instrumentos, mas sempre ignora o canal de bateria."
+                },
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                fontSize = 12.sp,
+            )
+
             Text("Velocidade", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -819,7 +879,9 @@ private fun ImportedMidiCard(
             }
 
             Button(
-                onClick = { onPreparePlayback(file, speedPercent, transposeSemitones) },
+                onClick = {
+                    onPreparePlayback(file, speedPercent, transposeSemitones, playbackMode)
+                },
                 enabled = accessibilityEnabled &&
                     associatedProfile != null &&
                     file.noteCount > 0 &&

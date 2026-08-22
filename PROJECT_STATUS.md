@@ -16,6 +16,8 @@ Atualizado em 22 de agosto de 2026.
 - Calibração manual exibida sobre o jogo pelo serviço de acessibilidade.
 - Botão flutuante para iniciar o mapeamento depois de abrir o jogo.
 - Marcação numerada das teclas em ordem, com ações de desfazer, cancelar e salvar.
+- Ordenação automática das posições da esquerda para a direita, permitindo marcar teclas brancas e pretas em qualquer ordem.
+- Correção automática de perfis antigos cujas posições foram salvas na ordem dos toques.
 - Criação de perfis com nome e quantidade personalizada de teclas.
 - Salvamento local e listagem de perfis calibrados.
 - Importação de arquivos `.mid` e `.midi` pelo seletor de documentos do Android.
@@ -27,6 +29,9 @@ Atualizado em 22 de agosto de 2026.
 - Ajuste de velocidade entre 25% e 300%.
 - Transposição entre -24 e +24 semitons, com adaptação à faixa do instrumento.
 - Agrupamento de notas simultâneas em acordes e remoção de toques repetidos.
+- Modo `Melodia limpa`, selecionado por padrão, que escolhe uma voz melódica e reduz acordes a uma nota principal.
+- Modo alternativo `Arranjo sem bateria`, que mantém acordes e instrumentos melódicos.
+- Remoção do canal MIDI de percussão em todos os modos de reprodução.
 - Controles flutuantes e arrastáveis de iniciar, pausar, continuar, repetir e parar.
 - Reprodução iniciada somente após ação explícita no controle sobre o jogo.
 - Testes unitários da criação de layouts e do mapeamento de notas.

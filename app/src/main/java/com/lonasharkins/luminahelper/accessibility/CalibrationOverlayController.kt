@@ -209,8 +209,14 @@ internal class CalibrationOverlayController(
     }
 
     private fun instructionText(markedCount: Int, total: Int): String = when {
-        markedCount >= total -> "Confira os pontos e toque em Salvar"
-        else -> "Toque no centro da tecla ${markedCount + 1} de $total"
+        markedCount >= total ->
+            "Ordem ajustada da esquerda para a direita. Confira e toque em Salvar"
+
+        markedCount == 0 ->
+            "Toque no centro de todas as teclas, em qualquer ordem"
+
+        else ->
+            "$markedCount de $total teclas marcadas. Continue em qualquer ordem"
     }
 
     private fun overlayParams(width: Int, height: Int, gravity: Int) = WindowManager.LayoutParams(
@@ -266,14 +272,16 @@ private class CalibrationTouchView(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val radius = 16f * density
-        positions.forEachIndexed { index, point ->
-            val x = point.x * width
-            val y = point.y * height
-            canvas.drawCircle(x, y, radius, markerFill)
-            canvas.drawCircle(x, y, radius, markerBorder)
-            val baseline = y - ((markerText.ascent() + markerText.descent()) / 2f)
-            canvas.drawText("${index + 1}", x, baseline, markerText)
-        }
+        positions
+            .sortedWith(compareBy<ScreenPoint> { it.x }.thenBy { it.y })
+            .forEachIndexed { index, point ->
+                val x = point.x * width
+                val y = point.y * height
+                canvas.drawCircle(x, y, radius, markerFill)
+                canvas.drawCircle(x, y, radius, markerBorder)
+                val baseline = y - ((markerText.ascent() + markerText.descent()) / 2f)
+                canvas.drawText("${index + 1}", x, baseline, markerText)
+            }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
