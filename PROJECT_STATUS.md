@@ -23,6 +23,12 @@ Atualizado em 22 de agosto de 2026.
 - Suporte a running status, note-on com velocidade zero e mudanças globais de andamento.
 - Associação do arquivo importado a um perfil de instrumento calibrado.
 - Salvamento local e exibição do resumo dos arquivos MIDI interpretados.
+- Agendamento das notas MIDI conforme o tempo da música.
+- Ajuste de velocidade entre 25% e 300%.
+- Transposição entre -24 e +24 semitons, com adaptação à faixa do instrumento.
+- Agrupamento de notas simultâneas em acordes e remoção de toques repetidos.
+- Controles flutuantes e arrastáveis de iniciar, pausar, continuar, repetir e parar.
+- Reprodução iniciada somente após ação explícita no controle sobre o jogo.
 - Testes unitários da criação de layouts e do mapeamento de notas.
 - Testes unitários da aplicação ordenada das posições calibradas.
 - Testes unitários do parser MIDI e da conversão de pulsos em tempo.
@@ -31,10 +37,9 @@ Atualizado em 22 de agosto de 2026.
 ## Ainda não implementado
 
 - Edição e remoção de perfis salvos.
-- Agendador de notas, velocidade e transposição na reprodução.
-- Controle flutuante de iniciar, pausar e parar.
+- Edição e remoção de músicas MIDI importadas.
 - Leitura de MIDI que usa divisão de tempo SMPTE; nesta versão são aceitos arquivos com pulsos por semínima.
 
 ## Próxima etapa
 
-Agendar as notas interpretadas para reprodução, com ajuste de velocidade e transposição, usando o perfil calibrado associado.
+Adicionar edição e remoção de perfis e músicas importadas, preservando a calibração e as associações existentes.
