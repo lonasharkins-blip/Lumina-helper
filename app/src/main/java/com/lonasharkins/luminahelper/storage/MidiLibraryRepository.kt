@@ -28,8 +28,19 @@ class MidiLibraryRepository(context: Context) {
             add(file)
             addAll(loadAll().filterNot { it.uri == file.uri })
         }
+        persist(updated)
+    }
+
+    fun associateProfile(fileId: String, profileId: String) {
+        val updated = loadAll().map { file ->
+            if (file.id == fileId) file.copy(instrumentProfileId = profileId) else file
+        }
+        persist(updated)
+    }
+
+    private fun persist(files: List<ImportedMidiFile>) {
         val array = JSONArray()
-        updated.forEach { array.put(encode(it)) }
+        files.forEach { array.put(encode(it)) }
         preferences.edit().putString(KEY_FILES, array.toString()).apply()
     }
 
