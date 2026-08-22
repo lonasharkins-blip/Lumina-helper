@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lumina Helper</string>
+    <string name="accessibility_service_name">Toques do Lumina Helper</string>
+    <string name="accessibility_description">Permite que o Lumina Helper toque somente nas posições de instrumentos que você configurar e enquanto você controlar a reprodução.</string>
+</resources>
+
