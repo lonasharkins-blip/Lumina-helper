@@ -1,6 +1,7 @@
 package com.lonasharkins.luminahelper.storage
 
 import android.content.Context
+import com.lonasharkins.luminahelper.calibration.ProfileCalibrator
 import com.lonasharkins.luminahelper.model.InstrumentProfile
 import com.lonasharkins.luminahelper.model.MappedKey
 import com.lonasharkins.luminahelper.model.ScreenPoint
@@ -77,11 +78,11 @@ class InstrumentProfileRepository(context: Context) {
             }
         }
 
-        InstrumentProfile(
+        ProfileCalibrator.normalizeHorizontal(InstrumentProfile(
             id = json.getString("id"),
             name = json.getString("name"),
             keys = keys,
-        )
+        ))
     }.getOrNull()
 
     private companion object {

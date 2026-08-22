@@ -67,7 +67,8 @@ internal class PlaybackOverlayController(
             } else {
                 playback.transposeSemitones.toString()
             }
-            text = "${playback.profileName} • ${playback.speedPercent}% • $transpose semitons"
+            text = "${playback.profileName} • ${playback.playbackMode.label} • " +
+                "${playback.speedPercent}% • $transpose semitons"
             setTextColor(Color.rgb(182, 156, 255))
             textSize = 11f
             setPadding(dp(6), 0, dp(6), dp(4))
