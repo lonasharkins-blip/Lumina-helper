@@ -13,18 +13,22 @@ Atualizado em 22 de agosto de 2026.
 - Conversão de notas para a tecla disponível mais próxima.
 - Suporte interno a posições normalizadas, independente da resolução da tela.
 - Serviço capaz de emitir um toque ou um acorde em coordenadas já calibradas.
+- Calibração manual exibida sobre o jogo pelo serviço de acessibilidade.
+- Botão flutuante para iniciar o mapeamento depois de abrir o jogo.
+- Marcação numerada das teclas em ordem, com ações de desfazer, cancelar e salvar.
+- Criação de perfis com nome e quantidade personalizada de teclas.
+- Salvamento local e listagem de perfis calibrados.
 - Testes unitários da criação de layouts e do mapeamento de notas.
+- Testes unitários da aplicação ordenada das posições calibradas.
 - Compilação automática de APK pelo GitHub Actions.
 
 ## Ainda não implementado
 
-- Tela de calibração sobre o jogo.
-- Salvamento e edição de perfis.
+- Edição e remoção de perfis salvos.
 - Importação e leitura de MIDI.
 - Agendador de notas, velocidade e transposição na reprodução.
 - Controle flutuante de iniciar, pausar e parar.
 
 ## Próxima etapa
 
-Criar a calibração visual para o usuário marcar, em ordem, cada tecla do instrumento diretamente sobre a tela do jogo.
-
+Importar e interpretar arquivos MIDI para usar os perfis calibrados durante a reprodução.
